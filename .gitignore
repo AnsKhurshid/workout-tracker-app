@@ -47,6 +47,7 @@ app.*.map.json
 # Widget Preview related
 .widget_preview/
 
-# Environment configuration (real values never committed; see env/example.json)
-/env/*.json
-!/env/example.json
+# Environment configuration (real values are never committed; see .env.example)
+.env
+.env.*
+!.env.example

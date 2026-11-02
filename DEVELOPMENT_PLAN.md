@@ -8,8 +8,8 @@ Status legend: ✅ done · 🟡 in review · ⬜ not started
 
 | Phase | Scope | Status |
 |---|---|---|
-| 1 | Analysis and planning | 🟡 |
-| 2 | Foundation | ⬜ |
+| 1 | Analysis and planning | ✅ |
+| 2 | Foundation and authentication | 🟡 |
 | 3 | Workout management | ⬜ |
 | 4 | Workout execution | ⬜ |
 | 5 | History and analytics | ⬜ |
@@ -18,7 +18,7 @@ Status legend: ✅ done · 🟡 in review · ⬜ not started
 
 ---
 
-## Phase 1 — Analysis and planning 🟡
+## Phase 1 — Analysis and planning ✅
 
 **Findings from inspection (2026-11-02)**
 
@@ -37,39 +37,49 @@ Status legend: ✅ done · 🟡 in review · ⬜ not started
 * `ARCHITECTURE.md`, `DATABASE_SCHEMA.md`, this plan, `README.md`.
 * Draft Supabase migrations in `supabase/migrations/` and a smoke test in
   `supabase/tests/`, verified on PostgreSQL 16.
-* `env/example.json` and `.gitignore` rules for environment files.
+* Environment-file template and `.gitignore` rules (replaced by `.env.example` in Phase 2).
 
 ---
 
-## Phase 2 — Foundation ⬜
+## Phase 2 — Foundation and authentication 🟡
 
-Goal: an app that launches, signs users in and out, and has the database,
-theme, navigation and sync plumbing every later phase builds on.
+Full report: [docs/phase-reports/PHASE_2_REPORT.md](docs/phase-reports/PHASE_2_REPORT.md).
 
-1. Dependencies and tooling: add the packages in ARCHITECTURE §3, `build.yaml`,
-   `analysis_options.yaml` (with `riverpod_lint`), CI-friendly scripts.
-2. Configuration: `Env` class reading `--dart-define-from-file`, fail-fast check.
-3. Theme: `AppTokens` ThemeExtension, `AppTheme.dark()` / `.light()`, typography
-   scale, dark as default.
-4. Core widgets: card, buttons, text/number fields, empty/error/skeleton states,
-   confirm dialog.
-5. Drift database: all eight mirrored tables + `sync_outbox`, `sync_cursors`,
-   `app_state`; type converters; schema snapshot v1; `Clock` and UUIDv7 services.
-6. Outbox helper used by repositories (enqueue + coalesce in-transaction). The
-   push/pull engine itself is Phase 6, but every write from Phase 2 onwards is
-   already queued, so no data written before Phase 6 is left unsynced.
-7. Supabase initialisation; apply migrations to a real project (needs
-   credentials, see README).
-8. Authentication: register, login, logout, forgot/reset password with deep link,
-   session persistence, GoRouter redirects.
-9. Profile: view/edit display name, weight unit, default rest, auto-start timer.
-10. Navigation shell: 4 tabs with placeholder screens clearly labelled
-    "Coming in Phase N".
-11. Tests: auth controller and redirect logic, Drift database opens and migrates,
-    outbox enqueue/coalesce, unit conversion.
+**Delivered**
 
-**Exit criteria:** a user can register, log in, edit profile settings, log out;
-`flutter analyze` clean; tests pass.
+1. App setup: name "Gym Tracker", id `com.anskhurshid.gymtracker`, Android
+   `minSdk 24`, iOS 15.0, auth deep link on both platforms, Inter font.
+2. Configuration: `.env.example`, `EnvConfig` with validation, and a
+   "Configuration required" screen.
+3. Design system: palette, `AppTokens`, spacing/radii/sizes, typography, and
+   dark and light Material 3 themes with every component themed. Dark is the
+   default and the theme can be changed in Profile.
+4. Shared widgets: buttons with loading state, text and password fields, empty,
+   error, loading and skeleton states, section card, confirm dialog, snackbar
+   helper, planned-feature placeholder.
+5. Startup: splash, then config check, database open and Supabase init, with a
+   retryable error screen.
+6. Error handling: `AppFailure` hierarchy, `mapError`, redacting `AppLogger`,
+   global error handlers.
+7. Drift database v1: `profiles`, `app_settings`, `sync_outbox`,
+   `sync_cursors`, plus schema snapshot. `Outbox` helper with
+   coalescing and backoff.
+8. Supabase: `SupabaseService` (single client access point, PKCE).
+9. Auth: welcome, register (with email-confirmation handling), login, forgot
+   password, reset password via deep link, logout. `AuthRepository` interface
+   with a Supabase implementation. Session-expiry handling.
+10. Navigation: GoRouter with four-tab `StatefulShellRoute`, pure
+    `authRedirect` guard, refresh on auth changes.
+11. Profile: name, email, KG/LBS (persisted locally, queued and uploaded),
+    theme, logout, pending-sync indicator.
+12. Home: greeting with real name and honest empty states. Workouts and
+    Progress are placeholders that clearly say they are in development.
+13. Tests: 87 passing (unit, repository, controller, router and widget tests).
+    `flutter analyze` reports no issues.
+
+**Not verified yet:** registration, login, password reset and profile upload
+against a real Supabase project (no credentials were available), and builds
+on a real Android or iOS device (no SDKs in the build environment).
 
 ## Phase 3 — Workout management ⬜
 
@@ -146,7 +156,7 @@ theme, navigation and sync plumbing every later phase builds on.
 |---|---|
 | Device clock wrong → LWW picks the wrong edit | Server clamps future timestamps; per-row granularity keeps conflicts rare; single user. |
 | Schema drift between Drift and Postgres | One mapping per table in the sync registry with a round-trip test per table. |
-| Password-reset deep link misconfigured | Documented setup; tested manually on both platforms in Phase 2. |
+| Password-reset deep link misconfigured | Configured for Android and iOS in Phase 2 and documented in ENVIRONMENT_SETUP.md. Still needs a manual test on a device against a real project. |
 | Package churn (Riverpod 3, go_router 18) | Pin versions; upgrade only between phases. |
 | Large local history slowing charts | Indexed queries, per-session aggregation in SQL, measured in Phase 7. |
 
@@ -186,7 +196,7 @@ used unless you decide otherwise.
    otherwise defer.
 9. **Email confirmation on sign-up.** *Recommendation:* enable it in Supabase
    (safer), and show a "check your inbox" screen after registration.
-10. **Supabase project.** Phase 2 needs a Supabase project URL and anon key in a
+10. **Supabase project.** *(Still open after Phase 2.)* Verifying auth needs a Supabase project URL and publishable key in a
     local `env/dev.json` (never committed) and the password-reset redirect URL
     configured. Do you already have a project, or should the setup steps be
     written for you to create one?

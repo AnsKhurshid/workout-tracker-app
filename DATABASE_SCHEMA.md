@@ -299,12 +299,15 @@ partially pushed batch is always consistent and simply resumes on retry.
 
 ## 7. Local SQLite schema (Drift)
 
-Mirrors the eight tables above with the same column names, plus:
+Schema version 1 (Phase 2) contains `profiles` (mirror) plus the local-only
+`app_settings`, `sync_outbox` and `sync_cursors`. Later phases add the other
+seven mirrored tables as new schema versions, with the same column names as
+Postgres. Snapshot: `drift_schemas/drift_schema_v1.json`.
 
 | Difference | Reason |
 |---|---|
 | Enums stored as `TEXT` with Dart enum converters | SQLite has no enums. |
-| Timestamps stored as integer UTC milliseconds | Drift default; sortable. |
+| Timestamps stored as ISO-8601 text (UTC) | Keeps milliseconds (Drift's integer mode stores whole seconds); sortable. |
 | `weight_kg` as `REAL`, rounded to 3 dp on write via the `Weight` value object | SQLite has no decimal type. |
 | `secondary_muscle_groups` as a JSON text array with a type converter | SQLite has no arrays. |
 | `sync_outbox`, `sync_cursors`, `app_state` tables | Local-only sync and app state (see ARCHITECTURE §7.2). |

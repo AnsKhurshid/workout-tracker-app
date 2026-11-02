@@ -1,94 +1,81 @@
 # Gym Tracker
 
 A simple, modern, offline-first gym workout tracker built with Flutter and
-Supabase. Create workout plans, log sets, reps and weights in a fast active
+Supabase. Create workout plans, log sets, reps and weights on a fast active
 workout screen, see what you lifted last time, and track progress over time.
 
-> **Status: Phase 1 (planning) complete, awaiting approval.**
-> The repository currently contains the Flutter scaffold, the design documents
-> and draft database migrations. No app features are implemented yet. See
-> [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) for progress.
+> **Status: Phase 2 (foundation and authentication) complete, awaiting approval.**
+> The app launches, has the full design system, four-tab navigation, account
+> registration, login, password reset, logout and a profile with KG/LBS and
+> theme settings. Workout features (plans, logging, history, progress) are not
+> built yet; their screens say so. See [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md).
+
+## What works today
+
+| Area | Status |
+|---|---|
+| Welcome, registration, login, forgot/reset password, logout | Implemented. Tested with a fake backend; **not yet verified against a real Supabase project** |
+| Email confirmation flow and auth deep link (Android + iOS) | Implemented. Needs a device test against a real project |
+| Route protection (signed out / signed in / password recovery / session expired) | Implemented and tested |
+| Profile: display name, email, KG/LBS, theme | Implemented. Saved on the device and uploaded to Supabase when reachable |
+| Dark and light themes (dark by default) | Implemented |
+| Local SQLite database (Drift) with sync outbox | Implemented (profile and settings only so far) |
+| Home dashboard | Layout and empty states only. No workout data exists yet, so no statistics are shown |
+| Workouts, Progress tabs | Placeholders describing what's coming |
 
 ## Documentation
 
 | Document | What it covers |
 |---|---|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Layers, project structure, local-first data flow, sync design, navigation, UI, key decisions |
-| [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md) | Tables, relationships, constraints, RLS, business-rule mapping, local SQLite schema |
-| [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) | Phases, exit criteria, risks, open questions |
-
-## Version 1.0 features (planned)
-
-* Email/password accounts with password reset and a basic profile (KG/LBS)
-* Exercise library with search, muscle-group filters and custom exercises
-* Multiple workout plans with per-exercise set templates, rest and notes
-* Active workout logging with warm-up/working sets, per-set weights, notes,
-  skip/add/reorder, and inline previous performance
-* Rest timer that stays accurate in the background
-* Workout history with editing and deletion
-* Progress charts: weight, reps, volume and estimated 1RM (Epley)
-* Works fully offline; syncs to Supabase when online
+| [ENVIRONMENT_SETUP.md](ENVIRONMENT_SETUP.md) | Toolchain, Supabase setup, `.env`, running, deep links, troubleshooting |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Layers, structure, local-first data flow, sync design, auth, navigation, UI, decisions |
+| [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md) | Postgres tables, relationships, RLS, business rules, local SQLite schema |
+| [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) | Phases, status, risks, open questions |
+| [docs/phase-reports/](docs/phase-reports/) | Completion report for each phase |
 
 ## Tech stack
 
-Flutter (Material 3) · Riverpod · GoRouter · Drift (SQLite) · Supabase (Auth,
-Postgres with RLS) · fl_chart
+Flutter 3.47 / Dart 3.13 · Material 3 · Riverpod 3 · GoRouter 18 · Drift
+(SQLite) · Supabase (Auth, Postgres with RLS) · Inter font
 
-## Prerequisites
-
-* Flutter **3.47.x** stable (Dart 3.13)
-* Android Studio / Xcode for device builds
-* A Supabase project (free tier is fine)
-* Optional: [Supabase CLI](https://supabase.com/docs/guides/cli) and Docker for
-  running Supabase locally and for database tests
-
-## Setup
-
-### 1. Supabase
-
-1. Create a project at [supabase.com](https://supabase.com).
-2. Apply the migrations in `supabase/migrations/` in filename order, either with
-   the CLI (`supabase link --project-ref <ref>` then `supabase db push`) or by
-   pasting each file into the SQL editor.
-3. Authentication → URL Configuration: add
-   `com.anskhurshid.gymtracker://auth-callback` to **Redirect URLs** (used by
-   password reset). The app-side deep link is configured in Phase 2.
-4. Authentication → Providers → Email: enabled (email confirmation recommended).
-
-### 2. App configuration
-
-Secrets are never committed. Copy the template and fill in your project values
-(Project Settings → API):
-
-```bash
-cp env/example.json env/dev.json
-```
-
-```json
-{
-  "SUPABASE_URL": "https://<project-ref>.supabase.co",
-  "SUPABASE_ANON_KEY": "<anon public key>"
-}
-```
-
-Only the **anon** key belongs in the app; data is protected by Row Level
-Security. Never put the service-role key in this file.
-
-### 3. Run
+## Quick start
 
 ```bash
 flutter pub get
-flutter run --dart-define-from-file=env/dev.json
+cp .env.example .env        # then fill in your Supabase URL and publishable key
+flutter run --dart-define-from-file=.env
 ```
 
-(Code generation, `dart run build_runner build`, is introduced in Phase 2.)
+You need a Supabase project with the migrations from `supabase/migrations/`
+applied and the auth redirect URL configured. See
+[ENVIRONMENT_SETUP.md](ENVIRONMENT_SETUP.md) for the full steps.
+
+Without a `.env`, the app opens on a "Configuration required" screen that
+lists what is missing.
+
+## How it works (short version)
+
+* **Local first.** Everything the user changes is written to the on-device
+  SQLite database first, together with an outbox entry, in one transaction.
+  Uploading to Supabase happens afterwards and retries when offline.
+* **Authentication.** Supabase email/password with PKCE deep links. The
+  router redirects based on one auth status stream: signed out → Welcome,
+  signed in → Home, reset link → "Choose a new password".
+* **Data isolation.** Supabase Row Level Security on every table. On the
+  device, data is keyed by user id and is kept (not deleted) on logout.
+* **Configuration.** Supabase URL and publishable key are compiled in from
+  `.env` with `--dart-define-from-file`. No secrets live in the repository.
 
 ## Testing
 
 ```bash
+dart format --set-exit-if-changed lib test
 flutter analyze
 flutter test
 ```
+
+The Flutter tests use an in-memory database and fakes for Supabase, so they
+need no credentials or network.
 
 Database smoke test on a scratch PostgreSQL 15+ database (no Supabase needed):
 
@@ -101,11 +88,23 @@ psql -d scratch -v ON_ERROR_STOP=1 \
 psql -d scratch -f supabase/tests/phase1_schema_smoke.sql
 ```
 
+## Known limitations
+
+* Auth and profile upload have not yet been run against a real Supabase
+  project.
+* Builds have not been run on a physical device or emulator yet.
+* Supabase's built-in email service only sends to project team members and is
+  rate-limited; configure SMTP to test sign-up with other addresses.
+* The full background sync engine arrives in Phase 6. Until then, only the
+  profile uploads its own changes.
+
 ## Project structure
 
 ```
-lib/          Flutter app (feature-oriented; see ARCHITECTURE.md §4)
-test/         Unit and widget tests
-supabase/     SQL migrations and database tests
-env/          Build-time configuration templates
+lib/            Flutter app (feature-oriented; see ARCHITECTURE.md §4)
+test/           Unit, repository, controller, router and widget tests
+supabase/       SQL migrations and database smoke test
+drift_schemas/  Local database schema snapshots
+assets/fonts/   Inter font and licence
+docs/           Phase reports
 ```

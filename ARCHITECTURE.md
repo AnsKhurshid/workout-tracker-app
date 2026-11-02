@@ -1,11 +1,13 @@
 # Gym Tracker v1.0 — Architecture
 
-Status: **Proposed (Phase 1)**. Nothing in this document is implemented yet
-except the Flutter scaffold and the draft SQL migrations. Sections marked
-**Open question** need a product decision before the relevant phase starts.
+Status: **Phase 2 implemented** (foundation and authentication). Sections
+about workouts, sync engine and analytics describe the design for later
+phases. Each section says what exists today where it matters. Changes made
+during Phase 2 are listed in [§17](#17-phase-2-changes-to-the-phase-1-design).
 
 Related documents: [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md) ·
-[DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) · [README.md](README.md)
+[DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) ·
+[ENVIRONMENT_SETUP.md](ENVIRONMENT_SETUP.md) · [README.md](README.md)
 
 ---
 
@@ -62,99 +64,100 @@ Rules that keep this clean:
 
 ## 3. Technology choices
 
-All versions were checked against pub.dev on 2026-11-02 and are compatible with
-the installed toolchain (**Flutter 3.47.9, Dart 3.13.7**). Exact constraints are
-added to `pubspec.yaml` in Phase 2.
+Toolchain: **Flutter 3.47.9, Dart 3.13.7**. Versions below are what Phase 2
+installed (see `pubspec.yaml` / `pubspec.lock`).
+
+### Installed in Phase 2
 
 | Concern | Package | Version | Why |
 |---|---|---|---|
-| State management | `flutter_riverpod`, `riverpod_annotation` | ^3.4, ^4.0 | Required by spec. Riverpod 3 with code-generated providers gives compile-time safety and automatic disposal. |
-| Navigation | `go_router` | ^18.1 | Required by spec. `StatefulShellRoute` preserves each tab's stack. |
-| Local DB | `drift`, `drift_flutter` | ^2.35, ^0.3 | Typed SQL, reactive `watch()` streams, real transactions, migrations with schema verification. `drift_flutter` bundles SQLite via the `sqlite3` native-assets build (the old `sqlite3_flutter_libs` is end-of-life). |
-| Backend | `supabase_flutter` | ^2.18 | Auth + PostgREST client; persists the session securely for offline startup. |
-| Charts | `fl_chart` | ^1.3 | Mature, no native deps, enough for line/bar progress charts. |
-| IDs | `uuid` | ^4.6 | Client-generated **UUIDv7** (time-ordered, so B-tree indexes stay compact). |
-| Immutable models | `freezed`, `freezed_annotation` | ^4.0, ^3.1 | `copyWith`/equality for domain models without hand-written boilerplate. |
-| Connectivity hint | `connectivity_plus` | ^7.3 | Triggers a sync attempt when a network appears. It is only a hint: sync success is decided by the actual request. |
-| Formatting | `intl` | ^0.20 | Dates, durations, decimal weights in the user's locale. |
-| Rest timer alert | `flutter_local_notifications` | ^22.3 | **Open question 6.** Lets the timer alert when the app is backgrounded. |
-| Codegen (dev) | `build_runner`, `drift_dev`, `riverpod_generator`, `freezed` | | One `build_runner` pipeline for all generated code. |
-| Testing (dev) | `flutter_test`, `mocktail` | ^1.0 | Mocks for repository/service boundaries; Drift runs in-memory for repository tests. |
-| Lints (dev) | `flutter_lints` (already present), `riverpod_lint` | ^6.0, ^3.1 | |
+| State management | `flutter_riverpod` | ^3.4.3 | Required by spec. Plain providers/notifiers, no code generation. |
+| Navigation | `go_router` | ^18.1.2 | Required by spec. `StatefulShellRoute` keeps each tab's stack and state. |
+| Local DB | `drift`, `drift_flutter` | ^2.35.3, ^0.3.1 | Typed SQL, reactive streams, transactions, migrations. `drift_flutter` opens SQLite on a background isolate and bundles SQLite through the `sqlite3` package's build hooks. |
+| Backend | `supabase_flutter` | ^2.18.3 | Auth + PostgREST. Persists the session for offline startup; handles auth deep links (PKCE). |
+| IDs | `uuid` | ^4.6.0 | Client-generated UUIDv7 (used from Phase 3). |
+| Codegen (dev) | `build_runner`, `drift_dev` | ^2.17, ^2.35 | Drift code generation and schema dumps. |
+| Testing (dev) | `flutter_test`, `mocktail` | ^1.0.5 | Mocks for the Supabase auth client. Drift runs in memory. |
+| Lints (dev) | `flutter_lints` | ^6.0.0 | Plus stricter rules in `analysis_options.yaml`. |
+| Font | Inter (bundled asset, SIL OFL) | 4.1 | Clear figures for workout data; bundled so it works offline. |
+
+### Planned for later phases (added only when needed)
+
+| Package | Phase | Purpose |
+|---|---|---|
+| `fl_chart` | 5 | Progress charts |
+| `intl` | 4/5 | Locale-aware dates and decimals |
+| `connectivity_plus` | 6 | Hint to trigger a sync when a network appears |
+| `flutter_local_notifications` | 4 | Rest timer alert while the phone is locked (open question 6) |
 
 Deliberately **not** used:
 
 * `flutter_dotenv`: it ships the `.env` file as an app asset, so it hides
-  nothing. We use `--dart-define-from-file` instead (see §11).
-* `shared_preferences`: small settings and timer state live in Drift, so there
-  is one storage engine with transactional guarantees.
-* Any background-sync plugin (`workmanager` etc.): sync runs while the app is in
-  the foreground and on resume, which covers the v1 requirement without extra
-  platform setup.
-* Supabase Storage and Realtime: not needed for v1.
+  nothing. `.env` is read by `flutter run --dart-define-from-file=.env` at build
+  time instead.
+* `shared_preferences`: device settings live in Drift (`app_settings`), so
+  there is one storage engine.
+* `riverpod_generator` and `freezed`: dropped for now (see §17). Plain Riverpod
+  and small hand-written immutable models are enough, and codegen is kept to
+  Drift only.
+* Any background-sync plugin, Supabase Storage, Realtime: not needed for v1.
 
 ---
 
 ## 4. Project structure
 
+As implemented in Phase 2 (later phases add folders inside `features/`):
+
 ```
 lib/
-  main.dart                     # bootstrap: env, Supabase.initialize, ProviderScope
-  app.dart                      # MaterialApp.router, theme, router
+  main.dart                       # global error handlers, ProviderScope
+  app.dart                        # startup gate → MaterialApp.router, theme mode
   core/
-    constants/                  # limits (max reps, max weight), durations, keys
-    theme/                      # AppTheme (dark + light), AppTokens ThemeExtension
+    config/env_config.dart        # build-time config + validation
+    constants/app_constants.dart  # limits, deep link, names
     database/
-      app_database.dart         # @DriftDatabase, migrations
-      tables/                   # one file per table (mirrors Postgres + local-only)
-      daos/                     # query groups per aggregate
-    sync/
-      sync_engine.dart          # push/pull loop, retry/backoff
-      sync_registry.dart        # table order + (de)serialisers
-      outbox.dart               # enqueue/coalesce helpers used by repositories
+      tables.dart                 # Drift tables (profiles, app_settings, sync_outbox, sync_cursors)
+      app_database.dart(.g.dart)  # database, migrations, open()
+    errors/
+      app_failure.dart            # sealed failure types with user/debug messages
+      error_mapper.dart           # the only place that knows 3rd-party exceptions
+    logging/app_logger.dart       # redacting logger
     services/
-      auth_service.dart         # wraps Supabase Auth
-      connectivity_service.dart
-      clock.dart                # injectable clock (testable timestamps)
-      id_generator.dart         # UUIDv7
-    utils/                      # weight conversion, formatting, Result type
-    widgets/                    # AppCard, PrimaryButton, EmptyState, ErrorState,
-                                # Skeleton, ConfirmDialog, NumberStepperField ...
-  models/                       # shared domain models (Exercise, WorkoutPlan,
-                                # PlanExercise, Workout, WorkoutSet, Weight, ...)
+      clock.dart                  # injectable clock
+      id_generator.dart           # UUIDv7
+      supabase_service.dart       # Supabase init + single client access point
+    settings/app_settings_repository.dart   # device-level settings (theme)
+    startup/                      # appStartupProvider, splash/error screens
+    sync/
+      outbox.dart                 # enqueue/coalesce/backoff helpers
+      sync_tables.dart            # synced table names + push order
+    theme/                        # palette, tokens, spacing, typography, AppTheme
+    widgets/                      # buttons, fields, empty/error/skeleton, dialogs …
+    providers.dart                # app-level dependency providers
+  models/                         # AuthUser, UserProfile, WeightUnit, AppThemePreference
   features/
-    authentication/   {data, domain, presentation}
-    home/             {domain, presentation}
-    workout_plans/    {data, domain, presentation}
-    exercise_library/ {data, domain, presentation}
-    active_workout/   {data, domain, presentation}   # incl. rest timer
-    workout_history/  {data, domain, presentation}
-    progress/         {data, domain, presentation}
-    profile/          {data, domain, presentation}
+    authentication/ {domain, data, presentation/{controllers, screens, widgets}}
+    profile/        {domain, data, presentation}
+    home/           presentation/   # empty-state dashboard
+    workout_plans/  presentation/   # placeholder (Phase 3)
+    progress/       presentation/   # placeholder (Phase 5)
   routing/
-    app_router.dart             # GoRouter + redirects
-    routes.dart                 # typed route names/paths
+    routes.dart  auth_redirect.dart  app_router.dart  scaffold_with_nav_bar.dart
 
-test/                           # mirrors lib/; unit + widget tests
-integration_test/               # end-to-end flows on device/emulator
-supabase/
-  migrations/                   # ordered SQL migrations (Supabase CLI layout)
-  tests/                        # SQL tests for RLS and constraints
-env/
-  example.json                  # template for --dart-define-from-file
+test/                             # mirrors lib/ + helpers/ (fakes, in-memory DB, test app)
+drift_schemas/                    # Drift schema snapshots for migration tests
+supabase/migrations/              # Postgres schema (Phase 1)
+assets/fonts/                     # Inter + licence
 ```
 
 Inside each feature:
 
-* `domain/` — repository interface(s), use-case style services with business
-  rules, feature-only models. Pure Dart.
-* `data/` — repository implementation over Drift DAOs, mapping DB rows ⇄
-  domain models.
-* `presentation/` — screens, widgets, Riverpod controllers (`Notifier` /
-  `AsyncNotifier`) and providers.
+* `domain/` — repository interfaces and feature types. Pure Dart, no Flutter
+  or package imports beyond `foundation`.
+* `data/` — implementations over Drift and Supabase.
+* `presentation/` — screens, widgets, Riverpod providers and controllers.
 
-Shared entities used by several features (an `Exercise` appears in the library,
-plans, workouts and progress) live in `lib/models/` to avoid duplicate types.
+Shared entities used by several features live in `lib/models/`.
 
 ---
 
@@ -326,37 +329,85 @@ history, previous performance and progress charts instant and fully offline.
 
 ### 7.7 Sign-out and multiple accounts
 
-User-specific data isolation on a shared device: on sign-out the local
-database is wiped. If unsynced changes exist, the app first tries to sync and,
-if that fails, warns the user and requires explicit confirmation before
-discarding them (never silently).
+*Changed in Phase 2 (was: wipe the local database on sign-out).*
+
+Signing out **never deletes local data**. Instead, user data is isolated by
+owner:
+
+* every user-owned local row carries the owner's id (`profiles.id`,
+  `sync_outbox.user_id`, `sync_cursors.user_id`, and `user_id` on all workout
+  tables from Phase 3);
+* every repository query filters by the signed-in user's id, and the Riverpod
+  providers that expose user data are keyed on the current user, so they rebuild
+  (and drop the previous user's data from memory) when the user changes;
+* unsynced changes stay in the outbox and are uploaded the next time that user
+  signs in on the device.
+
+Device-level settings (`app_settings`, e.g. theme) are shared by everyone using
+the device.
 
 ---
 
 ## 8. Authentication
 
-* Supabase email + password: register, log in, log out, password reset.
-* A profile row is created by a database trigger on sign-up
-  (`handle_new_user`), using the display name passed as sign-up metadata.
-* The Supabase session is persisted on device, so a previously signed-in user
-  can open and use the app fully offline. Sign-in and registration themselves
-  require a network.
-* Password reset uses Supabase's email link with a deep link back into the app
-  (`com.anskhurshid.gymtracker://auth-callback`), which opens a "set new
-  password" screen. Needs redirect URL configuration (see README).
-* GoRouter `redirect` guards: unauthenticated → `/auth/*`; authenticated and
-  first sync pending → `/syncing`; otherwise the shell.
+Implemented in Phase 2.
+
+* **Supabase email + password** behind the `AuthRepository` interface
+  (`SupabaseAuthRepository`). Screens and controllers never see Supabase types.
+* **Status model:** `Unauthenticated(sessionExpired)`, `Authenticated(user)`,
+  `PasswordRecovery(user)`, derived from Supabase's auth event stream.
+* **Registration:** `signUp` with `display_name` in user metadata and
+  `emailRedirectTo` = `com.anskhurshid.gymtracker://auth-callback`. The
+  `handle_new_user` trigger creates the `profiles` row. If the project
+  requires email confirmation, the app shows "Confirm your email". Otherwise
+  the user is signed in immediately. An already-registered email is detected
+  even when Supabase hides it (empty `identities`).
+* **Login:** `signInWithPassword`. Errors are mapped to friendly messages
+  (invalid credentials, unconfirmed email, rate limit, offline).
+* **Password reset:** `resetPasswordForEmail` with the same redirect. Opening
+  the link fires `passwordRecovery`, and the router allows only the "Choose a
+  new password" screen until `updateUser(password)` succeeds or the user
+  cancels (signs out).
+* **Flow type:** PKCE, so deep links carry a one-time code, not tokens.
+* **Session:** persisted by `supabase_flutter` and auto-refreshed. A
+  previously signed-in user can open the app offline. If the refresh token is
+  rejected, Supabase signs out with a non-user reason, and the app returns to
+  Welcome with "Your session has expired".
+* **Logout:** clears the session on the device first, then revokes it on the
+  server. Offline, the revoke fails quietly and the user is still signed out.
+  Local data is kept (§7.7).
+* **Route guards:** one pure function, `authRedirect(status, location)`, run by
+  GoRouter on navigation and whenever the auth status changes (via
+  `refreshListenable`). The router is created once and widgets never check
+  auth themselves.
+
+### Profile (Phase 2)
+
+* `ProfileRepositoryImpl` is local-first. On sign-in it ensures a local row
+  exists. Offline, it creates a placeholder from sign-up metadata, marked as
+  older than any server row and never queued. It then refreshes from
+  Supabase.
+* Edits (display name, KG/LBS) update the local row and enqueue an outbox
+  entry in one transaction, then try to upload right away. On failure the
+  entry stays queued with exponential backoff. Network errors stay
+  `pending`. Rejections are marked `failed` and kept, never dropped.
+* A server row only replaces local data if no newer local change is waiting.
+* Phase 6 replaces the direct upload with the general sync engine. The
+  repository then only writes locally.
 
 ---
 
 ## 9. Navigation
 
+Routes marked ✓ exist after Phase 2. The rest are planned.
+
 ```
-/auth/login  /auth/register  /auth/forgot-password  /auth/reset-password
-/syncing                                   (first pull after sign-in)
-StatefulShellRoute (bottom nav, each tab keeps its own stack)
-  /home
-  /workouts
+✓ /welcome  /login  /register  /register/check-email  /forgot-password
+✓ /reset-password                          (only reachable during password recovery)
+  /syncing                                 (first pull after sign-in, Phase 6)
+✓ StatefulShellRoute.indexedStack (bottom nav, each tab keeps its own stack)
+✓ /home
+✓ /workouts                                (placeholder until Phase 3)
       /workouts/plans/new
       /workouts/plans/:planId              (view/edit, reorder exercises)
       /workouts/plans/:planId/exercises/:planExerciseId
@@ -365,9 +416,9 @@ StatefulShellRoute (bottom nav, each tab keeps its own stack)
       /workouts/exercises/:exerciseId
       /workouts/history
       /workouts/history/:workoutId         (view/edit past workout)
-  /progress
+✓ /progress                                (placeholder until Phase 5)
       /progress/exercises/:exerciseId
-  /profile
+✓ /profile
       /profile/settings
       /profile/sync
 /workout/active                            (full-screen, outside the shell)
@@ -423,13 +474,26 @@ One scrollable page; no navigation needed to log a set.
 
 ## 11. Configuration and secrets
 
-* Supabase URL and anon key are passed at build time:
-  `flutter run --dart-define-from-file=env/dev.json`.
-* `env/example.json` is committed; real `env/*.json` files are git-ignored.
-* The anon key is designed to be public; security comes from RLS. The service
-  role key is **never** used in the app.
-* The app refuses to start (with a clear developer error) if the defines are
-  missing, rather than silently running without a backend.
+* `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` are passed at build time:
+  `flutter run --dart-define-from-file=.env`, and read with
+  `String.fromEnvironment` in `EnvConfig`.
+* `.env.example` is committed. `.env` is git-ignored.
+* The publishable (or legacy anon) key is designed to be public. Security comes
+  from RLS. The secret/service-role key is **never** used in the app.
+* Startup validates the configuration. If it is missing or still holds the
+  placeholders, the app shows a "Configuration required" screen listing the
+  problems instead of crashing or silently running without a backend.
+
+### Startup sequence
+
+`appStartupProvider` runs behind a splash screen:
+
+1. validate `EnvConfig`;
+2. open (and migrate) the local database on its background isolate;
+3. initialise Supabase, which restores a saved session and works offline.
+
+Any failure shows an error screen with **Try again**. A database failure never
+deletes the database.
 
 ---
 
@@ -450,15 +514,22 @@ One scrollable page; no navigation needed to log a set.
 
 ## 13. Error handling
 
-* Repositories return typed results/throw typed failures (`ValidationFailure`,
-  `NotFoundFailure`, `StorageFailure`); controllers convert them to user-facing
-  messages.
-* Validation (reps 0–999, weight 0–2000 kg, name lengths) is defined once in
-  the domain layer and mirrored by database CHECK constraints as a safety net.
-* Sync errors never block the UI; they show as a small status indicator and in
-  Profile → Sync status.
-* Unexpected errors are caught at the zone/`FlutterError.onError` level and
-  logged (crash reporting service is out of scope for v1).
+Implemented in Phase 2.
+
+* `AppFailure` (sealed): `NetworkFailure`, `AuthFailure(kind)`,
+  `ValidationFailure`, `StorageFailure`, `ConfigurationFailure`,
+  `UnexpectedFailure`. Each has a `userMessage` (safe to show) and a
+  `debugMessage` (for logs).
+* `mapError()` is the only code that knows Supabase, socket, Postgrest and
+  SQLite exception types. Repositories throw `AppFailure`s, controllers expose
+  them as `AsyncError`, and widgets show `userMessage`.
+* `AppLogger` redacts emails, JWTs, bearer/API keys and token query parameters
+  before writing. `FlutterError.onError` and `PlatformDispatcher.onError`
+  route uncaught errors to it, so nothing is swallowed silently.
+* Validation rules are defined once (`Validators`, mirrored by database CHECK
+  constraints).
+* Sync errors never block the UI. A pending profile change shows "Saved on
+  this device, waiting to sync".
 
 ---
 
@@ -494,3 +565,15 @@ One scrollable page; no navigation needed to log a set.
 ## 16. Open questions
 
 See the list at the end of [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md#open-questions-for-approval).
+
+## 17. Phase 2 changes to the Phase 1 design
+
+| Change | Reason |
+|---|---|
+| Sign-out keeps local data, isolated by user id, instead of wiping the database. | Phase 2 requirement: "do not delete user data merely because the user logs out". It also avoids losing unsynced changes. |
+| Config file is `.env` (via `--dart-define-from-file`), not `env/*.json`. | Phase 2 asked for `.env.example`. Flutter reads `.env` files natively, so no extra package is needed. |
+| `SUPABASE_PUBLISHABLE_KEY` instead of `SUPABASE_ANON_KEY`. | `supabase_flutter` 2.18 deprecates `anonKey` in favour of `publishableKey`. The legacy anon key still works as the value. |
+| No `riverpod_generator` / `freezed`. | Fewer dependencies and a single codegen step (Drift). Can be added later without restructuring. |
+| Drift stores `DateTime` as ISO-8601 text (not integer milliseconds). | Drift's integer mode keeps only whole seconds. Text keeps milliseconds and stays sortable. |
+| App id / bundle id `com.anskhurshid.gymtracker` (was `gym_tracker` / `gymTracker`). | URL schemes cannot contain underscores. Using one identifier everywhere keeps the deep link consistent. |
+| Theme preference is per device, weight unit is per account. | Theme is needed before sign-in (welcome screen). Weight unit is part of the synced profile. |
